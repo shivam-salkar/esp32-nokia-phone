@@ -1,0 +1,16 @@
+# Archives
+*.zip
+*.tar.gz
+
+# Arduino / PlatformIO / IDE builds
+build/
+.pio/
+*.bin
+*.hex
+*.elf
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

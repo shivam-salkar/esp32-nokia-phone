@@ -7,18 +7,25 @@
 // Singleton instance
 DisplayManager Display;
 
-// Hardware SPI on FSPI bus (Confirmed ESP32-S3 Hardware SPI)
-static SPIClass _spi(FSPI);
-static Adafruit_ST7735 _tftInstance(&_spi, TFT_CS, TFT_DC, TFT_RST);
+// Exact verified constructor from TFT_Test.ino:
+// Explicit GPIO routing for ESP32-S3 (CS, DC, MOSI, SCK, RST)
+static Adafruit_ST7735 _tftInstance(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RST);
 
 // ─────────────────────────────────────────────────────────────
 void DisplayManager::begin() {
     Serial.println(F("[DISPLAY] Initializing TFT..."));
 
-    // Hardware SPI initialization with confirmed pins
-    _spi.begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
+    // Hardware reset pulse to guarantee clean ST7735 controller start
+    pinMode(TFT_RST, OUTPUT);
+    digitalWrite(TFT_RST, HIGH);
+    delay(10);
+    digitalWrite(TFT_RST, LOW);
+    delay(20);
+    digitalWrite(TFT_RST, HIGH);
+    delay(50);
 
-    _tftInstance.initR(INITR_BLACKTAB);   // ST7735S black-tab init
+    // Initialise ST7735S (Black Tab 128×160)
+    _tftInstance.initR(INITR_BLACKTAB);
     _tftInstance.setRotation(0);          // Portrait 128×160
     _tftInstance.fillScreen(ST77XX_BLACK);
 

@@ -1,11 +1,6 @@
 // =============================================================
 // AppManager.h — Application Lifecycle Controller
 // =============================================================
-// Manages the currently active app.
-// Apps are identified by an AppID enum.
-// The manager calls begin(), update(), and onInput() on the
-// active app — no app logic lives in the main sketch loop.
-// =============================================================
 
 #ifndef APP_MANAGER_H
 #define APP_MANAGER_H
@@ -20,20 +15,21 @@ enum AppID {
     APP_LAUNCHER,
     APP_MENU,
     APP_CALCULATOR,
-    APP_TEXT_EDITOR,
+    APP_NOTES,
+    APP_SNAKE,
     APP_SETTINGS,
-    APP_SNAKE
+    APP_ABOUT
 };
 
 // ─────────────────────────────────────────────────────────────
-// Base App interface — every app inherits from this
+// Base App interface
 // ─────────────────────────────────────────────────────────────
 class App {
 public:
     virtual ~App() {}
-    virtual void begin()  = 0;               // Called once on app start
-    virtual void update() = 0;               // Called every loop tick
-    virtual void onInput(InputEvent ev) = 0; // Called when an event arrives
+    virtual void begin()  = 0;
+    virtual void update() = 0;
+    virtual void onInput(InputEvent ev) = 0;
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -54,7 +50,6 @@ private:
     void _destroyCurrentApp();
 };
 
-// Singleton
 extern AppManager AppMgr;
 
 #endif // APP_MANAGER_H

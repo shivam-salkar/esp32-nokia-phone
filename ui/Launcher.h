@@ -16,12 +16,12 @@ public:
 
 private:
     void _draw();
-    void _drawClock();
+    void _drawClock(bool colonBlink);
+    void _drawStatusBar();
 
     uint32_t _lastClockUpdate;
-    uint8_t  _fakeSeconds;
-    uint8_t  _fakeMinutes;
-    uint8_t  _fakeHours;
+    uint32_t _bootSeconds;
+    bool     _colonBlink;
 };
 
 #endif // LAUNCHER_H

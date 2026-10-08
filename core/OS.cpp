@@ -6,21 +6,22 @@
 #include "DisplayManager.h"
 #include "InputManager.h"
 #include "AppManager.h"
+#include "../storage/StorageManager.h"
 
 OS NokiaOS;
 
 // ─────────────────────────────────────────────────────────────
 void OS::begin() {
-    Serial.println(F("======================"));
-    Serial.println(F("  ESP32-Nokia-OS Boot "));
-    Serial.println(F("======================"));
-    Serial.println(F("[BOOT] Starting OS"));
+    Serial.println(F("[BOOT] ESP32 Mini OS"));
 
     Display.begin();
-    Input.begin();
-    AppMgr.begin();
+    Display.showBootScreen();
 
-    Serial.println(F("[BOOT] OS ready"));
+    Input.begin();
+    Storage.begin();
+
+    Serial.println(F("[OS] Starting Home Screen"));
+    AppMgr.begin();
 }
 
 // ─────────────────────────────────────────────────────────────

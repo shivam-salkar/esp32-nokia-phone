@@ -5,6 +5,8 @@
 #ifndef OS_H
 #define OS_H
 
+#include <Arduino.h>
+
 class OS {
 public:
     void begin();   // Call once in Arduino setup()

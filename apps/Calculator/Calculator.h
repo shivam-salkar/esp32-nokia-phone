@@ -1,5 +1,5 @@
 // =============================================================
-// Calculator.h — 4-function Calculator App
+// Calculator.h — 4-function Floating-Point Calculator App
 // =============================================================
 
 #ifndef CALCULATOR_H
@@ -15,31 +15,27 @@ public:
     void onInput(InputEvent ev) override;
 
 private:
-    // Expression state
-    double  _operandA;
-    double  _operandB;
-    char    _operator;       // '+' '-' '*' '/'
-    bool    _enteringB;      // false=entering A, true=entering B
-    bool    _showResult;
-    bool    _errorState;
+    double   _operandA;
+    double   _operandB;
+    char     _operator;       // '+' '-' '*' '/'
+    bool     _enteringB;
+    bool     _showResult;
+    bool     _errorState;
 
-    // Current digit string being entered
-    char    _input[16];
-    uint8_t _inputLen;
+    char     _input[20];
+    uint8_t  _inputLen;
 
-    // Soft cursor — which digit/symbol is highlighted on keypad
-    uint8_t _cursor;         // 0-15 maps to keypad layout
+    uint32_t _lastZeroPress;  // For double-tap '0' -> '.' detection
 
     void _draw();
     void _drawDisplay();
-    void _drawKeypad();
-    void _highlightKey(uint8_t idx, bool on);
-    void _pressKey(uint8_t idx);
+    void _drawKeypadHelp();
+    void _appendDigit(char digit);
+    void _appendDecimal();
+    void _setOperator(char op);
     void _calculate();
-    void _clearInput();
-
-    // Keypad layout: 4 rows × 4 cols
-    static const char* _keyLabels[16];
+    void _clearAll();
+    void _backspace();
 };
 
 #endif // CALCULATOR_H

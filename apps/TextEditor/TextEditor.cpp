@@ -1,61 +1,33 @@
 // =============================================================
-// TextEditor.cpp — Note-taking App with LittleFS
-// =============================================================
-// Notes are stored in LittleFS as /notes/NNN.txt
-//
-// File list mode:
-//   UP/DOWN   → scroll file list
-//   OK        → view selected file
-//   BACK      → return to menu
-//   MENU      → new note (enters edit mode)
-//
-// View mode:
-//   BACK      → return to file list
-//   LEFT      → delete note (with confirm)
-//
-// Edit mode:
-//   Type in Serial monitor, press Enter each line.
-//   Type "SAVE" (alone on a line) to save.
-//   Type "CANCEL" to discard.
-//
-// Delete confirm:
-//   OK        → confirm delete
-//   BACK      → cancel
+// TextEditor.cpp — Notes App with Multi-Tap Text & LittleFS
 // =============================================================
 
 #include "TextEditor.h"
 #include "../../core/DisplayManager.h"
 #include "../../core/AppManager.h"
+#include "../../storage/StorageManager.h"
 
 static const char* NOTES_DIR = "/notes";
+static const uint32_t MULTITAP_TIMEOUT_MS = 800;
 
 // ─────────────────────────────────────────────────────────────
 void TextEditor::begin() {
-    Serial.println(F("[APP] TextEditor started"));
+    Serial.println(F("[APP] Notes / TextEditor started"));
+    Input.setMode(INPUT_MODE_NAV);
 
-    // Mount LittleFS
-    if (!LittleFS.begin(true)) {  // true = format on fail
-        Serial.println(F("[FS] LittleFS mount failed"));
-        Display.clear(C_BLACK);
-        Display.drawHeader("TextEditor", C_NOKIA_BLUE, C_WHITE);
-        _showMsg("LittleFS Error!", C_RED);
-        return;
-    }
-    Serial.println(F("[FS] LittleFS mounted"));
+    _mode           = MODE_FILE_LIST;
+    _fileCount      = 0;
+    _fileSelected   = 0;
+    _noteLen        = 0;
+    _noteBuf[0]     = '\0';
+    _currentFile[0] = '\0';
 
-    // Create notes directory if absent
-    if (!LittleFS.exists(NOTES_DIR)) {
-        LittleFS.mkdir(NOTES_DIR);
-    }
-
-    _mode         = MODE_FILE_LIST;
-    _fileCount    = 0;
-    _fileSelected = 0;
-    _noteLen      = 0;
-    _noteBuf[0]   = '\0';
-    _waitingForText = false;
-    _serialLen    = 0;
-    _serialBuf[0] = '\0';
+    _lastKey        = '\0';
+    _tapIndex       = 0;
+    _lastTapTime    = 0;
+    _hasPendingChar = false;
+    _capsLock       = true;
+    _serialLen      = 0;
 
     _scanFiles();
     _drawFileList();
@@ -63,291 +35,438 @@ void TextEditor::begin() {
 
 // ─────────────────────────────────────────────────────────────
 void TextEditor::update() {
-    if (_mode == MODE_EDITING && _waitingForText) {
+    if (_mode == MODE_EDITING) {
+        if (_hasPendingChar && (millis() - _lastTapTime >= MULTITAP_TIMEOUT_MS)) {
+            _commitPending();
+            _drawEditor();
+        }
         _processSerialText();
     }
 }
 
 // ─────────────────────────────────────────────────────────────
 void TextEditor::onInput(InputEvent ev) {
-    switch (_mode) {
+    if (_mode == MODE_FILE_LIST) {
+        switch (ev) {
+            case INPUT_UP:
+            case INPUT_KEY_2:
+                if (_fileSelected > 0) {
+                    _fileSelected--;
+                    _drawFileList();
+                }
+                break;
 
-        case MODE_FILE_LIST:
-            if (ev == INPUT_UP && _fileSelected > 0) {
-                _fileSelected--;
-                _drawFileList();
-            } else if (ev == INPUT_DOWN && _fileSelected < _fileCount - 1) {
-                _fileSelected++;
-                _drawFileList();
-            } else if (ev == INPUT_OK && _fileCount > 0) {
-                _loadFile(_files[_fileSelected]);
-                _mode = MODE_VIEWING;
-                _drawViewer();
-            } else if (ev == INPUT_BACK) {
-                AppMgr.launchApp(APP_MENU);
-            } else if (ev == INPUT_MENU) {
-                // New note
-                _noteLen      = 0;
-                _noteBuf[0]   = '\0';
-                _serialLen    = 0;
-                _serialBuf[0] = '\0';
-                _waitingForText = true;
-                _mode = MODE_EDITING;
+            case INPUT_DOWN:
+            case INPUT_KEY_8:
+                if (_fileSelected + 1 < _fileCount) {
+                    _fileSelected++;
+                    _drawFileList();
+                }
+                break;
+
+            case INPUT_OK:
+            case INPUT_KEY_5:
+                if (_fileCount > 0) {
+                    _loadFile(_files[_fileSelected]);
+                    _mode = MODE_VIEWING;
+                    _drawViewer();
+                }
+                break;
+
+            case INPUT_MENU:
+            case INPUT_HASH:
+            case INPUT_A:
+                // New Note
+                _noteLen        = 0;
+                _noteBuf[0]     = '\0';
+                snprintf(_currentFile, sizeof(_currentFile), "note_%u.txt", (unsigned)millis() % 10000);
+                _mode           = MODE_EDITING;
+                Input.setMode(INPUT_MODE_TEXT);
+                _lastKey        = '\0';
+                _hasPendingChar = false;
                 _drawEditor();
-            }
-            break;
+                break;
 
-        case MODE_VIEWING:
-            if (ev == INPUT_BACK) {
-                _mode = MODE_FILE_LIST;
-                _drawFileList();
-            } else if (ev == INPUT_LEFT) {
+            case INPUT_BACK:
+            case INPUT_STAR:
+                AppMgr.launchApp(APP_MENU);
+                break;
+
+            case INPUT_HOME:
+            case INPUT_KEY_0:
+                AppMgr.launchApp(APP_LAUNCHER);
+                break;
+
+            default:
+                break;
+        }
+    } else if (_mode == MODE_VIEWING) {
+        switch (ev) {
+            case INPUT_OK:
+            case INPUT_KEY_5:
+                // Edit note
+                _mode = MODE_EDITING;
+                Input.setMode(INPUT_MODE_TEXT);
+                _lastKey = '\0';
+                _hasPendingChar = false;
+                _drawEditor();
+                break;
+
+            case INPUT_B:
+            case INPUT_C:
+                // Delete
                 _mode = MODE_CONFIRM_DEL;
                 _drawConfirmDelete();
-            }
-            break;
+                break;
 
-        case MODE_EDITING:
-            // Text entry handled via Serial in update()
-            // BACK cancels
-            if (ev == INPUT_BACK) {
-                _waitingForText = false;
+            case INPUT_BACK:
+            case INPUT_STAR:
                 _mode = MODE_FILE_LIST;
-                _drawFileList();
-            }
-            break;
-
-        case MODE_CONFIRM_DEL:
-            if (ev == INPUT_OK) {
-                _deleteFile(_files[_fileSelected]);
                 _scanFiles();
+                _drawFileList();
+                break;
+
+            case INPUT_HOME:
+            case INPUT_KEY_0:
+                AppMgr.launchApp(APP_LAUNCHER);
+                break;
+
+            default:
+                break;
+        }
+    } else if (_mode == MODE_EDITING) {
+        // Multi-tap text editing mode
+        char raw = Input.getLastRawKey();
+
+        if (raw >= '0' && raw <= '9') {
+            _handleMultiTap(raw);
+        } else if (ev == INPUT_C) {
+            // Toggle Caps Lock
+            _commitPending();
+            _capsLock = !_capsLock;
+            _drawEditor();
+        } else if (ev == INPUT_D) {
+            // Newline
+            _commitPending();
+            if (_noteLen < sizeof(_noteBuf) - 2) {
+                _noteBuf[_noteLen++] = '\n';
+                _noteBuf[_noteLen]   = '\0';
+                _drawEditor();
+            }
+        } else if (ev == INPUT_HASH || ev == INPUT_A) {
+            // Save note
+            _commitPending();
+            _saveFile(_currentFile, _noteBuf);
+            Input.setMode(INPUT_MODE_NAV);
+            _mode = MODE_FILE_LIST;
+            _scanFiles();
+            _drawFileList();
+        } else if (ev == INPUT_STAR || ev == INPUT_BACK) {
+            // Backspace / Cancel
+            if (_hasPendingChar) {
+                _hasPendingChar = false;
+                if (_noteLen > 0) _noteBuf[--_noteLen] = '\0';
+                _lastKey = '\0';
+                _drawEditor();
+            } else if (_noteLen > 0) {
+                _noteBuf[--_noteLen] = '\0';
+                _drawEditor();
+            } else {
+                // Empty note — exit edit mode
+                Input.setMode(INPUT_MODE_NAV);
                 _mode = MODE_FILE_LIST;
                 _drawFileList();
-            } else if (ev == INPUT_BACK) {
-                _mode = MODE_VIEWING;
-                _drawViewer();
             }
-            break;
+        }
+    } else if (_mode == MODE_CONFIRM_DEL) {
+        if (ev == INPUT_OK || ev == INPUT_KEY_5 || ev == INPUT_B) {
+            _deleteFile(_currentFile);
+            _mode = MODE_FILE_LIST;
+            _scanFiles();
+            _drawFileList();
+        } else if (ev == INPUT_BACK || ev == INPUT_STAR) {
+            _mode = MODE_VIEWING;
+            _drawViewer();
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+char TextEditor::_getMultiTapChar(char key, uint8_t index) {
+    const char* letters = "";
+    switch (key) {
+        case '1': letters = ".,!?-1"; break;
+        case '2': letters = _capsLock ? "ABC2" : "abc2"; break;
+        case '3': letters = _capsLock ? "DEF3" : "def3"; break;
+        case '4': letters = _capsLock ? "GHI4" : "ghi4"; break;
+        case '5': letters = _capsLock ? "JKL5" : "jkl5"; break;
+        case '6': letters = _capsLock ? "MNO6" : "mno6"; break;
+        case '7': letters = _capsLock ? "PQRS7" : "pqrs7"; break;
+        case '8': letters = _capsLock ? "TUV8" : "tuv8"; break;
+        case '9': letters = _capsLock ? "WXYZ9" : "wxyz9"; break;
+        case '0': letters = " 0"; break;
+        default: return '\0';
+    }
+
+    uint8_t count = strlen(letters);
+    if (count == 0) return '\0';
+    return letters[index % count];
+}
+
+void TextEditor::_commitPending() {
+    _hasPendingChar = false;
+    _lastKey        = '\0';
+    _tapIndex       = 0;
+}
+
+void TextEditor::_handleMultiTap(char key) {
+    uint32_t now = millis();
+
+    if (_hasPendingChar && key == _lastKey && (now - _lastTapTime < MULTITAP_TIMEOUT_MS)) {
+        // Repeated tap on same key — cycle through letters
+        _tapIndex++;
+        char c = _getMultiTapChar(key, _tapIndex);
+        if (_noteLen > 0) {
+            _noteBuf[_noteLen - 1] = c;
+        }
+        _lastTapTime = now;
+        _drawEditor();
+    } else {
+        // Different key or timeout: commit previous and start new character
+        _commitPending();
+
+        if (_noteLen < sizeof(_noteBuf) - 2) {
+            _lastKey        = key;
+            _tapIndex       = 0;
+            _lastTapTime    = now;
+            _hasPendingChar = true;
+
+            char c = _getMultiTapChar(key, _tapIndex);
+            _noteBuf[_noteLen++] = c;
+            _noteBuf[_noteLen]   = '\0';
+            _drawEditor();
+        }
     }
 }
 
 // ─────────────────────────────────────────────────────────────
 void TextEditor::_scanFiles() {
     _fileCount = 0;
-    File dir = LittleFS.open(NOTES_DIR);
-    if (!dir || !dir.isDirectory()) return;
+    if (!Storage.isLittleFSReady()) return;
 
-    File f = dir.openNextFile();
-    while (f && _fileCount < MAX_FILES) {
-        if (!f.isDirectory()) {
-            // Store just the filename (without dir prefix)
-            strncpy(_files[_fileCount], f.name(), 23);
-            _files[_fileCount][23] = '\0';
+    File root = LittleFS.open(NOTES_DIR);
+    if (!root || !root.isDirectory()) return;
+
+    File file = root.openNextFile();
+    while (file && _fileCount < MAX_FILES) {
+        if (!file.isDirectory()) {
+            const char* name = file.name();
+            // Store simple filename
+            const char* slash = strrchr(name, '/');
+            strncpy(_files[_fileCount], slash ? slash + 1 : name, sizeof(_files[_fileCount]) - 1);
+            _files[_fileCount][sizeof(_files[_fileCount]) - 1] = '\0';
             _fileCount++;
         }
-        f = dir.openNextFile();
+        file = root.openNextFile();
     }
-    Serial.print(F("[FS] Notes found: "));
-    Serial.println(_fileCount);
+
+    if (_fileSelected >= _fileCount && _fileCount > 0) {
+        _fileSelected = _fileCount - 1;
+    }
 }
 
-// ─────────────────────────────────────────────────────────────
 bool TextEditor::_loadFile(const char* filename) {
-    char path[40];
+    char path[48];
     snprintf(path, sizeof(path), "%s/%s", NOTES_DIR, filename);
+    strncpy(_currentFile, filename, sizeof(_currentFile) - 1);
 
     File f = LittleFS.open(path, "r");
-    if (!f) {
-        Serial.print(F("[FS] Cannot open: "));
-        Serial.println(path);
-        return false;
-    }
+    if (!f) return false;
+
     _noteLen = 0;
-    while (f.available() && _noteLen < 511) {
-        _noteBuf[_noteLen++] = (char)f.read();
+    while (f.available() && _noteLen < sizeof(_noteBuf) - 1) {
+        _noteBuf[_noteLen++] = f.read();
     }
     _noteBuf[_noteLen] = '\0';
     f.close();
-    strncpy(_currentFile, filename, sizeof(_currentFile) - 1);
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────
 bool TextEditor::_saveFile(const char* filename, const char* content) {
-    char path[40];
+    char path[48];
     snprintf(path, sizeof(path), "%s/%s", NOTES_DIR, filename);
 
     File f = LittleFS.open(path, "w");
-    if (!f) {
-        Serial.print(F("[FS] Cannot write: "));
-        Serial.println(path);
-        return false;
-    }
+    if (!f) return false;
+
     f.print(content);
     f.close();
-    Serial.print(F("[FS] Saved: "));
-    Serial.println(path);
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────
 bool TextEditor::_deleteFile(const char* filename) {
-    char path[40];
+    char path[48];
     snprintf(path, sizeof(path), "%s/%s", NOTES_DIR, filename);
-    bool ok = LittleFS.remove(path);
-    Serial.print(ok ? F("[FS] Deleted: ") : F("[FS] Delete failed: "));
-    Serial.println(path);
-    return ok;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Read Serial lines during editing mode
-// Ends when user types "SAVE" or "CANCEL"
-// ─────────────────────────────────────────────────────────────
-void TextEditor::_processSerialText() {
-    if (!Serial.available()) return;
-
-    String line = Serial.readStringUntil('\n');
-    line.trim();
-
-    String upper = line;
-    upper.toUpperCase();
-
-    if (upper == "SAVE") {
-        // Generate filename: noteNNN.txt
-        char fname[20];
-        snprintf(fname, sizeof(fname), "note%03d.txt", (int)_fileCount + 1);
-
-        _saveFile(fname, _serialBuf);
-        _scanFiles();
-        _waitingForText = false;
-        _mode = MODE_FILE_LIST;
-        _drawFileList();
-        _showMsg("Note saved!", C_NOKIA_GREEN);
-        return;
-    }
-
-    if (upper == "CANCEL") {
-        _waitingForText = false;
-        _mode = MODE_FILE_LIST;
-        _drawFileList();
-        return;
-    }
-
-    // Append line + newline to buffer
-    if (_serialLen + line.length() + 1 < 511) {
-        strcat(_serialBuf, line.c_str());
-        strcat(_serialBuf, "\n");
-        _serialLen = strlen(_serialBuf);
-    }
-
-    // Update line count display
-    Display.setTextSize(1);
-    Display.setTextColour(C_NOKIA_GREEN, C_BLACK);
-    char info[30];
-    snprintf(info, sizeof(info), "%d chars", (int)_serialLen);
-    Display.fillRect(0, 140, SCREEN_W, 10, C_BLACK);
-    Display.setCursor(2, 140);
-    Display.print(info);
+    return LittleFS.remove(path);
 }
 
 // ─────────────────────────────────────────────────────────────
 void TextEditor::_drawFileList() {
     Display.clear(C_BLACK);
-    Display.drawHeader("Text Editor", C_NOKIA_BLUE, C_WHITE);
-    Display.drawDivider(16, C_DARK_GREY);
+    Display.drawHeader("NOTES", C_NOKIA_BLUE, C_WHITE);
 
     if (_fileCount == 0) {
-        Display.printCentered("No notes yet", 60, 1, C_LIGHT_GREY, C_BLACK);
-        Display.printCentered("MENU=New Note", 80, 1, C_DARK_GREY, C_BLACK);
+        Display.setTextSize(1);
+        Display.printCentered("No Notes Found", 50, 1, C_LIGHT_GREY, C_BLACK);
+        Display.printCentered("Press # to create new", 70, 1, C_NOKIA_CYAN, C_BLACK);
     } else {
-        for (uint8_t i = 0; i < _fileCount && i < 6; i++) {
-            int16_t y  = 20 + i * 20;
-            bool hl    = (i == _fileSelected);
+        for (uint8_t i = 0; i < _fileCount; i++) {
+            int16_t y   = 18 + i * 15;
+            bool    hl  = (i == _fileSelected);
             uint16_t bg = hl ? C_NOKIA_BLUE : C_BLACK;
+            uint16_t fg = hl ? C_WHITE : C_LIGHT_GREY;
 
-            Display.fillRect(0, y, SCREEN_W, 18, bg);
+            Display.fillRect(2, y, SCREEN_W - 4, 14, bg);
+            if (hl) Display.drawRect(2, y, SCREEN_W - 4, 14, C_NOKIA_CYAN);
+
             Display.setTextSize(1);
-            Display.setTextColour(C_WHITE, bg);
-            Display.setCursor(4, y + 5);
-            Display.print(hl ? "> " : "  ");
+            Display.setTextColour(fg, bg);
+            Display.setCursor(6, y + 3);
             Display.print(_files[i]);
         }
     }
 
-    // Bottom bar
-    Display.fillRect(0, 148, SCREEN_W, 12, C_DARK_GREY);
-    Display.setTextColour(C_WHITE, C_DARK_GREY);
-    Display.setTextSize(1);
-    Display.setCursor(2, 150);
-    Display.print("M=New");
-    Display.setCursor(SCREEN_W - 34, 150);
-    Display.print("B=Back");
+    Display.drawDivider(136, C_DARK_GREY);
+    Display.printCentered("#:New  5:Open  *:Menu", 138, 1, C_LIGHT_GREY, C_BLACK);
+    Display.drawSoftKeys("#: New", "5: Open", C_NOKIA_BLUE, C_WHITE);
 }
 
-// ─────────────────────────────────────────────────────────────
 void TextEditor::_drawViewer() {
     Display.clear(C_BLACK);
     Display.drawHeader(_currentFile, C_NOKIA_BLUE, C_WHITE);
-    Display.drawDivider(16, C_DARK_GREY);
 
-    // Show note content — simple word-wrap at SCREEN_W chars
+    // Note contents box
+    Display.drawRect(2, 16, SCREEN_W - 4, 118, C_DARK_GREY);
+    Display.setTextSize(1);
+    Display.setTextColour(C_WHITE, C_BLACK);
+    Display.setCursor(5, 20);
+
+    // Simple line printing
+    int16_t curX = 5, curY = 20;
+    for (uint16_t i = 0; i < _noteLen; i++) {
+        char c = _noteBuf[i];
+        if (c == '\n' || curX > SCREEN_W - 12) {
+            curX = 5;
+            curY += 10;
+            if (curY > 124) break;
+            if (c == '\n') continue;
+        }
+        Display.setCursor(curX, curY);
+        char s[2] = { c, '\0' };
+        Display.print(s);
+        curX += 6;
+    }
+
+    Display.drawDivider(136, C_DARK_GREY);
+    Display.printCentered("5:Edit  B:Del  *:Back", 138, 1, C_LIGHT_GREY, C_BLACK);
+    Display.drawSoftKeys("*: Back", "5: Edit", C_NOKIA_BLUE, C_WHITE);
+}
+
+void TextEditor::_drawEditor() {
+    Display.clear(C_BLACK);
+
+    // Header showing filename and Caps status
+    char head[24];
+    snprintf(head, sizeof(head), "EDIT [%s]", _capsLock ? "ABC" : "abc");
+    Display.drawHeader(head, C_NOKIA_BLUE, C_WHITE);
+
+    // Text box
+    Display.drawRect(2, 16, SCREEN_W - 4, 102, C_NOKIA_BLUE);
     Display.setTextSize(1);
     Display.setTextColour(C_WHITE, C_BLACK);
 
-    int16_t x = 2, y = 20;
-    uint16_t i = 0;
-    while (_noteBuf[i] && y < 140) {
-        if (_noteBuf[i] == '\n') {
-            x = 2; y += 9; i++;
-            continue;
+    int16_t curX = 5, curY = 20;
+    for (uint16_t i = 0; i < _noteLen; i++) {
+        char c = _noteBuf[i];
+        if (c == '\n' || curX > SCREEN_W - 12) {
+            curX = 5;
+            curY += 10;
+            if (curY > 110) break;
+            if (c == '\n') continue;
         }
-        Display.setCursor(x, y);
-        char ch[2] = { _noteBuf[i], '\0' };
-        Display.print(ch);
-        x += 6;
-        if (x >= SCREEN_W - 6) { x = 2; y += 9; }
-        i++;
+        Display.setCursor(curX, curY);
+        char s[2] = { c, '\0' };
+        Display.print(s);
+        curX += 6;
     }
 
-    Display.fillRect(0, 148, SCREEN_W, 12, C_DARK_GREY);
-    Display.setTextColour(C_WHITE, C_DARK_GREY);
+    // Blinking / pending cursor indicator
+    if (_hasPendingChar) {
+        Display.fillRect(curX, curY + 6, 5, 2, C_YELLOW);
+    } else {
+        Display.fillRect(curX, curY + 6, 5, 2, C_NOKIA_CYAN);
+    }
+
+    // Multi-tap helper
+    Display.drawDivider(120, C_DARK_GREY);
     Display.setTextSize(1);
-    Display.setCursor(2, 150);
-    Display.print("L=Del");
-    Display.setCursor(SCREEN_W - 34, 150);
-    Display.print("B=Back");
+    Display.printCentered("2-9:Type  0:Spc  *:Bk", 123, 1, C_LIGHT_GREY, C_BLACK);
+    Display.printCentered("#:Save  C:Caps  D:Enter", 135, 1, C_NOKIA_CYAN, C_BLACK);
+
+    Display.drawSoftKeys("*: Backspace", "#: Save", C_NOKIA_BLUE, C_WHITE);
 }
 
-// ─────────────────────────────────────────────────────────────
-void TextEditor::_drawEditor() {
-    Display.clear(C_BLACK);
-    Display.drawHeader("New Note", C_NOKIA_BLUE, C_WHITE);
-    Display.drawDivider(16, C_DARK_GREY);
-
-    Display.printCentered("Type in Serial", 30, 1, C_WHITE, C_BLACK);
-    Display.printCentered("then press Enter", 42, 1, C_LIGHT_GREY, C_BLACK);
-    Display.printCentered("Type SAVE to save", 60, 1, C_NOKIA_GREEN, C_BLACK);
-    Display.printCentered("CANCEL to discard", 72, 1, C_DARK_GREY, C_BLACK);
-
-    Serial.println(F("[EDITOR] Type your note. Enter each line."));
-    Serial.println(F("[EDITOR] Type SAVE to save, CANCEL to discard."));
-}
-
-// ─────────────────────────────────────────────────────────────
 void TextEditor::_drawConfirmDelete() {
     Display.clear(C_BLACK);
-    Display.drawHeader("Delete?", C_RED, C_WHITE);
-    Display.drawDivider(16, C_DARK_GREY);
+    Display.drawHeader("DELETE NOTE", C_RED, C_WHITE);
 
-    Display.printCentered(_files[_fileSelected], 40, 1, C_WHITE, C_BLACK);
-    Display.printCentered("OK=Delete", 70, 1, C_RED, C_BLACK);
-    Display.printCentered("BACK=Cancel", 85, 1, C_LIGHT_GREY, C_BLACK);
+    Display.printCentered("Delete this note?", 50, 1, C_WHITE, C_BLACK);
+    Display.printCentered(_currentFile, 68, 1, C_YELLOW, C_BLACK);
+
+    Display.printCentered("Press 5 to Confirm", 96, 1, C_RED, C_BLACK);
+    Display.printCentered("Press * to Cancel", 112, 1, C_LIGHT_GREY, C_BLACK);
+
+    Display.drawSoftKeys("*: Cancel", "5: Delete", C_RED, C_WHITE);
 }
 
 // ─────────────────────────────────────────────────────────────
-void TextEditor::_showMsg(const char* msg, uint16_t colour) {
-    Display.fillRect(0, 110, SCREEN_W, 20, C_BLACK);
-    Display.printCentered(msg, 115, 1, colour, C_BLACK);
-    delay(1200);
+void TextEditor::_processSerialText() {
+    while (Serial.available()) {
+        char c = (char)Serial.read();
+        if (c == '\n' || c == '\r') {
+            if (_serialLen > 0) {
+                _serialBuf[_serialLen] = '\0';
+                String line(_serialBuf);
+                line.trim();
+                _serialLen = 0;
+
+                if (line.equalsIgnoreCase("SAVE")) {
+                    _saveFile(_currentFile, _noteBuf);
+                    Input.setMode(INPUT_MODE_NAV);
+                    _mode = MODE_FILE_LIST;
+                    _scanFiles();
+                    _drawFileList();
+                    return;
+                } else if (line.equalsIgnoreCase("CANCEL")) {
+                    Input.setMode(INPUT_MODE_NAV);
+                    _mode = MODE_FILE_LIST;
+                    _drawFileList();
+                    return;
+                } else {
+                    // Append line to note
+                    for (unsigned int i = 0; i < line.length(); i++) {
+                        if (_noteLen < sizeof(_noteBuf) - 2) {
+                            _noteBuf[_noteLen++] = line.charAt(i);
+                        }
+                    }
+                    _noteBuf[_noteLen] = '\0';
+                    _drawEditor();
+                }
+            }
+        } else {
+            if (_serialLen < sizeof(_serialBuf) - 1) {
+                _serialBuf[_serialLen++] = c;
+            }
+        }
+    }
 }

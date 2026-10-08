@@ -1,109 +1,123 @@
 // =============================================================
-// Launcher.cpp — Home Screen
-// =============================================================
-// Layout (128×160):
-//   Row 0-15   : Status bar  (time left, "OS" right)
-//   Row 16     : Divider
-//   Row 17-100 : Main area   (clock, title)
-//   Row 101-149: Hint bar
-//   Row 150-159: Bottom bar  (soft-key hints)
-//
-// Controls:
-//   OK / MENU → open main menu
+// Launcher.cpp — Home Screen Implementation
 // =============================================================
 
 #include "Launcher.h"
 #include "../core/DisplayManager.h"
 #include "../core/AppManager.h"
 
-// ─────────────────────────────────────────────────────────────
 void Launcher::begin() {
-    Serial.println(F("[APP] Launcher started"));
-    _fakeHours   = 12;
-    _fakeMinutes = 0;
-    _fakeSeconds = 0;
+    Serial.println(F("[APP] Home Screen started"));
     _lastClockUpdate = millis();
+    _bootSeconds     = millis() / 1000;
+    _colonBlink      = true;
     _draw();
 }
 
-// ─────────────────────────────────────────────────────────────
 void Launcher::update() {
-    // Advance fake clock every second
     uint32_t now = millis();
     if (now - _lastClockUpdate >= 1000) {
         _lastClockUpdate = now;
-        _fakeSeconds++;
-        if (_fakeSeconds >= 60) { _fakeSeconds = 0; _fakeMinutes++; }
-        if (_fakeMinutes >= 60) { _fakeMinutes = 0; _fakeHours++;   }
-        if (_fakeHours   >= 24)   _fakeHours   = 0;
-        _drawClock();
+        _bootSeconds++;
+        _colonBlink = !_colonBlink;
+        _drawClock(_colonBlink);
     }
 }
 
-// ─────────────────────────────────────────────────────────────
 void Launcher::onInput(InputEvent ev) {
-    if (ev == INPUT_OK || ev == INPUT_MENU) {
-        AppMgr.launchApp(APP_MENU);
+    switch (ev) {
+        case INPUT_MENU:
+        case INPUT_OK:
+        case INPUT_KEY_5:
+        case INPUT_HASH:
+            AppMgr.launchApp(APP_MENU);
+            break;
+
+        case INPUT_HOME:
+        case INPUT_KEY_0:
+            // Already Home — trigger a fresh redraw
+            _draw();
+            break;
+
+        default:
+            break;
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-void Launcher::_draw() {
-    Display.clear(C_BLACK);
-
-    // ── Status bar ───────────────────────────────────────
+void Launcher::_drawStatusBar() {
     Display.fillRect(0, 0, SCREEN_W, 14, C_NOKIA_BLUE);
     Display.setTextColour(C_WHITE, C_NOKIA_BLUE);
     Display.setTextSize(1);
 
-    // "ESP32" left side
-    Display.setCursor(2, 3);
-    Display.print("ESP32");
+    // Current time approximation (HH:MM based on uptime offset from 10:42)
+    uint32_t totalSec = (10 * 3600 + 42 * 60) + _bootSeconds;
+    uint8_t h = (totalSec / 3600) % 24;
+    uint8_t m = (totalSec / 60) % 60;
 
-    // Signal bars right side (static decoration)
-    for (uint8_t i = 0; i < 4; i++) {
-        Display.fillRect(SCREEN_W - 20 + i * 5, 3 + (3 - i) * 2,
-                         3, 2 + i * 2, C_NOKIA_GREEN);
-    }
+    char timeStr[8];
+    snprintf(timeStr, sizeof(timeStr), "%02u:%02u", h, m);
+    Display.setCursor(3, 3);
+    Display.print(timeStr);
 
-    // ── Divider ──────────────────────────────────────────
+    // Wi-Fi status indicator (Honest status: WiFi hardware present, not connected)
+    Display.setCursor(SCREEN_W - 54, 3);
+    Display.print("WiFi:Off");
+
     Display.drawDivider(14, C_DARK_GREY);
-
-    // ── Title ────────────────────────────────────────────
-    Display.printCentered("Nokia OS", 30, 2, C_NOKIA_GREEN, C_BLACK);
-    Display.drawDivider(50, C_DARK_GREY);
-
-    // ── Clock ────────────────────────────────────────────
-    _drawClock();
-
-    // ── Decorative border ────────────────────────────────
-    Display.drawRect(4, 26, SCREEN_W - 8, 95, C_NOKIA_BLUE);
-
-    // ── Hint ─────────────────────────────────────────────
-    Display.printCentered("Press OK for Menu", 126, 1, C_LIGHT_GREY, C_BLACK);
-
-    // ── Bottom soft-key bar ──────────────────────────────
-    Display.fillRect(0, 148, SCREEN_W, 12, C_DARK_GREY);
-    Display.setTextColour(C_WHITE, C_DARK_GREY);
-    Display.setTextSize(1);
-    Display.setCursor(4, 150);
-    Display.print("MENU");
-    Display.setCursor(SCREEN_W - 28, 150);
-    Display.print("BACK");
 }
 
-// ─────────────────────────────────────────────────────────────
-void Launcher::_drawClock() {
-    // Clear clock area
-    Display.fillRect(10, 60, SCREEN_W - 20, 40, C_BLACK);
+void Launcher::_draw() {
+    Display.clear(C_BLACK);
+    _drawStatusBar();
 
-    // Build time string HH:MM:SS
+    // Decorative retro Nokia double border
+    Display.drawRect(4, 18, SCREEN_W - 8, SCREEN_H - 34, C_NOKIA_BLUE);
+    Display.drawRect(6, 20, SCREEN_W - 12, SCREEN_H - 38, C_DARK_GREY);
+
+    // Title badge
+    Display.fillRect(16, 26, SCREEN_W - 32, 16, C_NOKIA_BLUE);
+    Display.printCentered("ESP32 OS", 30, 1, C_WHITE, C_NOKIA_BLUE);
+
+    // Retro phone / smiley symbol in center
+    int cx = SCREEN_W / 2;
+    int cy = 72;
+    Display.drawCircle(cx, cy, 14, C_YELLOW);
+    // Eyes
+    Display.drawPixel(cx - 5, cy - 4, C_YELLOW);
+    Display.drawPixel(cx - 4, cy - 4, C_YELLOW);
+    Display.drawPixel(cx + 4, cy - 4, C_YELLOW);
+    Display.drawPixel(cx + 5, cy - 4, C_YELLOW);
+    // Smile
+    Display.drawPixel(cx - 6, cy + 3, C_YELLOW);
+    Display.drawPixel(cx - 5, cy + 5, C_YELLOW);
+    Display.drawFastHLine(cx - 4, cy + 6, 9, C_YELLOW);
+    Display.drawPixel(cx + 5, cy + 5, C_YELLOW);
+    Display.drawPixel(cx + 6, cy + 3, C_YELLOW);
+
+    // Center clock
+    _drawClock(true);
+
+    // Help text
+    Display.printCentered("Press # for Menu", 124, 1, C_LIGHT_GREY, C_BLACK);
+
+    // Soft-key bar
+    Display.drawSoftKeys("#: MENU", "5: OK", C_NOKIA_BLUE, C_WHITE);
+}
+
+void Launcher::_drawClock(bool colonBlink) {
+    uint32_t totalSec = (10 * 3600 + 42 * 60) + _bootSeconds;
+    uint8_t h = (totalSec / 3600) % 24;
+    uint8_t m = (totalSec / 60) % 60;
+    uint8_t s = totalSec % 60;
+
+    // Clear clock sub-area only (avoids full-screen flicker)
+    Display.fillRect(10, 96, SCREEN_W - 20, 20, C_BLACK);
+
     char buf[12];
-    snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
-             _fakeHours, _fakeMinutes, _fakeSeconds);
+    snprintf(buf, sizeof(buf), "%02u%c%02u%c%02u",
+             h, colonBlink ? ':' : ' ',
+             m, colonBlink ? ':' : ' ',
+             s);
 
-    Display.printCentered(buf, 68, 2, C_WHITE, C_BLACK);
-
-    // Day label
-    Display.printCentered("Mon 06 Oct", 90, 1, C_LIGHT_GREY, C_BLACK);
+    Display.printCentered(buf, 99, 2, C_NOKIA_CYAN, C_BLACK);
 }
